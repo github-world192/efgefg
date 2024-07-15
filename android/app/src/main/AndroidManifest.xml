@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="appinventor.ai_dillen99999999.fwefefef">
     <application
         android:label="eng_vab"
         android:name="${applicationName}"
