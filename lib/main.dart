@@ -10,7 +10,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'English Vocabulary App',
+      title: '超級單字app',
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
@@ -24,7 +24,7 @@ class LevelSelectionScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Choose English Level'),
+        title: Text('選擇英文難度'),
       ),
       body: Center(
         child: Column(
