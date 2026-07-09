@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,10 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 class VocabularyListScreen extends StatefulWidget {
   final int level;
 
-  const VocabularyListScreen({Key? key, required this.level}) : super(key: key);
+  const VocabularyListScreen({super.key, required this.level});
 
   @override
-  _VocabularyListScreenState createState() => _VocabularyListScreenState();
+  State<VocabularyListScreen> createState() => _VocabularyListScreenState();
 }
 
 class _VocabularyListScreenState extends State<VocabularyListScreen> {
@@ -17,6 +18,10 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   bool _isFromCache = false;
+  String _searchQuery = '';
+  bool _showFavoritesOnly = false;
+  Set<String> _favoriteWords = <String>{};
+  Set<String> _learnedWords = <String>{};
 
   @override
   void initState() {
@@ -25,15 +30,17 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
   }
 
   String get _cacheKey => 'vocabulary_level_${widget.level}';
+  String get _favoriteWordsKey => 'favorite_words_level_${widget.level}';
+  String get _learnedWordsKey => 'learned_words_level_${widget.level}';
 
-  // 載入單字列表（先從快取，再從網路）
   Future<void> _loadVocabularyList() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
-    // 1. 先嘗試從快取載入
+    await _loadWordStates();
+
     final cachedData = await _loadFromCache();
     if (cachedData != null && cachedData.isNotEmpty) {
       setState(() {
@@ -43,11 +50,33 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
       });
     }
 
-    // 2. 同時從網路獲取最新資料
     await _fetchFromNetwork();
   }
 
-  // 從快取讀取資料
+  Future<void> _loadWordStates() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final favoriteWords = prefs.getStringList(_favoriteWordsKey) ?? <String>[];
+      final learnedWords = prefs.getStringList(_learnedWordsKey) ?? <String>[];
+      setState(() {
+        _favoriteWords = favoriteWords.toSet();
+        _learnedWords = learnedWords.toSet();
+      });
+    } catch (e) {
+      debugPrint('Failed to load word states: $e');
+    }
+  }
+
+  Future<void> _saveFavoriteWords() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_favoriteWordsKey, _favoriteWords.toList());
+  }
+
+  Future<void> _saveLearnedWords() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_learnedWordsKey, _learnedWords.toList());
+  }
+
   Future<List<dynamic>?> _loadFromCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -61,7 +90,6 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
     return null;
   }
 
-  // 儲存資料到快取
   Future<void> _saveToCache(List<dynamic> data) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -73,19 +101,16 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
     }
   }
 
-  // 從網路獲取資料
   Future<void> _fetchFromNetwork() async {
     try {
-      final url = 'https://raw.githubusercontent.com/AppPeterPan/TaiwanSchoolEnglishVocabulary/main/${widget.level}%E7%B4%9A.json';
+      final url =
+          'https://raw.githubusercontent.com/AppPeterPan/TaiwanSchoolEnglishVocabulary/main/${widget.level}%E7%B4%9A.json';
       final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
         final decodedData = json.decode(utf8.decode(response.bodyBytes)) as List<dynamic>;
-
-        // 儲存到快取
         await _saveToCache(decodedData);
 
-        // 更新 UI
         if (mounted) {
           setState(() {
             _vocabularyList = decodedData;
@@ -94,40 +119,31 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
             _errorMessage = null;
           });
         }
+      } else if (_vocabularyList.isEmpty) {
+        setState(() {
+          _errorMessage = '無法載入單字列表 (錯誤碼: ${response.statusCode})';
+          _isLoading = false;
+        });
       } else {
-        // 網路請求失敗
-        if (_vocabularyList.isEmpty) {
-          // 如果沒有快取資料，顯示錯誤
-          setState(() {
-            _errorMessage = '無法載入單字列表 (錯誤碼: ${response.statusCode})';
-            _isLoading = false;
-          });
-        } else {
-          // 有快取資料，只顯示提示
-          _showCacheWarning();
-        }
+        _showCacheWarning();
       }
     } catch (e) {
-      // 網路連線失敗
       if (_vocabularyList.isEmpty) {
-        // 如果沒有快取資料，顯示錯誤
         setState(() {
           _errorMessage = '網路連線失敗，請檢查網路設定';
           _isLoading = false;
         });
       } else {
-        // 有快取資料，只顯示提示
         _showCacheWarning();
       }
     }
   }
 
-  // 顯示快取警告
   void _showCacheWarning() {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Row(
+        const SnackBar(
+          content: Row(
             children: [
               Icon(Icons.offline_bolt, color: Colors.white),
               SizedBox(width: 8),
@@ -135,13 +151,12 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
             ],
           ),
           backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 3),
+          duration: Duration(seconds: 3),
         ),
       );
     }
   }
 
-  // 手動重新載入
   Future<void> _refreshVocabularyList() async {
     setState(() {
       _isLoading = true;
@@ -150,103 +165,73 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
     await _fetchFromNetwork();
   }
 
-  Widget _buildList() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(8.0),
-      itemCount: _vocabularyList.length,
-      itemBuilder: (context, index) {
-        final wordData = _vocabularyList[index];
-        final word = wordData['word'] ?? '';
+  String _extractWord(dynamic wordData) {
+    if (wordData is Map<String, dynamic>) {
+      return (wordData['word'] ?? '').toString();
+    }
+    if (wordData is Map) {
+      return (wordData['word'] ?? '').toString();
+    }
+    return '';
+  }
 
-        // 安全地取得定義
-        String definition = '無定義';
-        if (wordData['definitions'] != null &&
-            wordData['definitions'] is List &&
-            (wordData['definitions'] as List).isNotEmpty) {
-          definition = wordData['definitions'][0]['text'] ?? '無定義';
-        }
+  String _extractDefinition(dynamic wordData) {
+    if (wordData is! Map) {
+      return '無定義';
+    }
+    final definitions = wordData['definitions'];
+    if (definitions is List && definitions.isNotEmpty && definitions.first is Map) {
+      return (definitions.first['text'] ?? '無定義').toString();
+    }
+    return '無定義';
+  }
 
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          elevation: 1,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => BigWordPage(
-                    word: word,
-                    definition: definition,
-                  ),
-                ),
-              );
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '${index + 1}',
-                        style: TextStyle(
-                          color: Colors.blue.shade700,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          word,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          definition,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade700,
-                            height: 1.3,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    Icons.arrow_forward_ios,
-                    size: 16,
-                    color: Colors.grey.shade400,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
+  List<dynamic> get _filteredVocabularyList {
+    final query = _searchQuery.trim().toLowerCase();
+
+    return _vocabularyList.where((wordData) {
+      final word = _extractWord(wordData);
+      final wordMatches = query.isEmpty || word.toLowerCase().contains(query);
+      if (!wordMatches) {
+        return false;
+      }
+      if (_showFavoritesOnly && !_favoriteWords.contains(word)) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  int get _learnedCount {
+    return _vocabularyList.where((item) => _learnedWords.contains(_extractWord(item))).length;
+  }
+
+  double get _progressValue {
+    if (_vocabularyList.isEmpty) {
+      return 0;
+    }
+    return _learnedCount / _vocabularyList.length;
+  }
+
+  Future<void> _toggleFavorite(String word) async {
+    setState(() {
+      if (_favoriteWords.contains(word)) {
+        _favoriteWords.remove(word);
+      } else {
+        _favoriteWords.add(word);
+      }
+    });
+    await _saveFavoriteWords();
+  }
+
+  Future<void> _markAsLearned(String word) async {
+    if (_learnedWords.contains(word)) {
+      return;
+    }
+    setState(() {
+      _learnedWords.add(word);
+    });
+    await _saveLearnedWords();
   }
 
   Widget _buildLoadingState() {
@@ -304,8 +289,219 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
     );
   }
 
+  Widget _buildSearchAndProgressPanel() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      child: Column(
+        children: [
+          TextField(
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value;
+              });
+            },
+            decoration: InputDecoration(
+              hintText: '搜尋單字...',
+              prefixIcon: const Icon(Icons.search),
+              filled: true,
+              fillColor: Colors.grey.shade100,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              FilterChip(
+                label: const Text('只看收藏'),
+                selected: _showFavoritesOnly,
+                onSelected: (value) {
+                  setState(() {
+                    _showFavoritesOnly = value;
+                  });
+                },
+              ),
+              const Spacer(),
+              Text(
+                '已學習 $_learnedCount / ${_vocabularyList.length}',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: LinearProgressIndicator(
+              value: _progressValue,
+              minHeight: 8,
+              backgroundColor: Colors.grey.shade200,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildList(List<dynamic> filteredList) {
+    if (filteredList.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            _searchQuery.isNotEmpty || _showFavoritesOnly ? '找不到符合條件的單字' : '目前沒有單字資料',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      itemCount: filteredList.length,
+      itemBuilder: (context, index) {
+        final wordData = filteredList[index];
+        final word = _extractWord(wordData);
+        final definition = _extractDefinition(wordData);
+        final isFavorite = _favoriteWords.contains(word);
+        final isLearned = _learnedWords.contains(word);
+
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: InkWell(
+            onTap: () async {
+              await _markAsLearned(word);
+              if (!context.mounted) {
+                return;
+              }
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => BigWordPage(
+                    word: word,
+                    definition: definition,
+                  ),
+                ),
+              );
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${index + 1}',
+                        style: TextStyle(
+                          color: Colors.blue.shade700,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                word,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                            if (isLearned)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '已學習',
+                                  style: TextStyle(
+                                    color: Colors.green.shade700,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          definition,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey.shade700,
+                            height: 1.3,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          isFavorite ? Icons.star : Icons.star_border,
+                          color: isFavorite ? Colors.amber.shade700 : Colors.grey.shade400,
+                        ),
+                        tooltip: isFavorite ? '取消收藏' : '加入收藏',
+                        onPressed: () {
+                          _toggleFavorite(word);
+                        },
+                      ),
+                      Icon(
+                        Icons.arrow_forward_ios,
+                        size: 16,
+                        color: Colors.grey.shade400,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final filteredList = _filteredVocabularyList;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('英文 ${widget.level} 級單字'),
@@ -345,11 +541,11 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
             ),
           IconButton(
             icon: const Icon(Icons.info_outline),
-            tooltip: '共 ${_vocabularyList.length} 個單字',
+            tooltip: '目前顯示 ${filteredList.length} 個單字',
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('本級別共有 ${_vocabularyList.length} 個單字'),
+                  content: Text('目前顯示 ${filteredList.length} 個單字（總數 ${_vocabularyList.length}）'),
                   duration: const Duration(seconds: 2),
                 ),
               );
@@ -366,7 +562,14 @@ class _VocabularyListScreenState extends State<VocabularyListScreen> {
           ? _buildLoadingState()
           : _errorMessage != null
               ? _buildErrorState()
-              : _buildList(),
+              : Column(
+                  children: [
+                    _buildSearchAndProgressPanel(),
+                    Expanded(
+                      child: _buildList(filteredList),
+                    ),
+                  ],
+                ),
     );
   }
 }
@@ -376,10 +579,10 @@ class BigWordPage extends StatelessWidget {
   final String definition;
 
   const BigWordPage({
-    Key? key,
+    super.key,
     required this.word,
     required this.definition,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -406,7 +609,6 @@ class BigWordPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 20),
-                // 單字卡片
                 Card(
                   elevation: 4,
                   shape: RoundedRectangleBorder(
@@ -448,7 +650,6 @@ class BigWordPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 32),
-                // 定義區域
                 Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(
@@ -502,7 +703,6 @@ class BigWordPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
-                // 返回按鈕
                 OutlinedButton.icon(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.arrow_back),
